@@ -19,15 +19,15 @@ typedef enum { PROTO_TCP, PROTO_UDP } Protocol;
 
 // UDP message header
 typedef struct {
-    uint32_t seq; // Numéro de séquence
-    char type[5]; // Type de message (ex. LIST, WAIT) + terminateur nul
-    uint32_t len; // Longueur de la charge utile
+    uint32_t seq; // Sequence number
+    char type[5]; // Message type (e.g., LIST, WAIT) + null terminator
+    uint32_t len; // Payload length
 } UdpHeader;
 
 int create_socket(Protocol proto) {
     int sockfd = socket(AF_INET, proto == PROTO_TCP ? SOCK_STREAM : SOCK_DGRAM, 0);
     if (sockfd < 0) {
-        fprintf(stderr, "./Mahdi: Problème lors de la création du socket : %s\n", strerror(errno));
+        fprintf(stderr, "Result: Failed to create socket: %s\n", strerror(errno));
         return -1;
     }
     return sockfd;
@@ -52,7 +52,7 @@ int send_udp_request(int sockfd, struct sockaddr_in *serv_addr, char *buffer, si
 
     while (retries < UDP_MAX_RETRIES) {
         if (sendto(sockfd, packet, packet_len, 0, (struct sockaddr *)serv_addr, sizeof(*serv_addr)) < 0) {
-            fprintf(stderr, "./Mahdi: Échec de l'envoi de la requête UDP : %s\n", strerror(errno));
+            fprintf(stderr, "Result: Failed to send UDP packet: %s\n", strerror(errno));
             return -1;
         }
 
@@ -61,12 +61,12 @@ int send_udp_request(int sockfd, struct sockaddr_in *serv_addr, char *buffer, si
         FD_SET(sockfd, &readfds);
         int ready = select(sockfd + 1, &readfds, NULL, NULL, &tv);
         if (ready < 0) {
-            fprintf(stderr, "./Mahdi: Erreur dans la vérification des sockets : %s\n", strerror(errno));
+            fprintf(stderr, "Result: Error in select: %s\n", strerror(errno));
             return -1;
         }
         if (ready == 0) {
             retries++;
-            printf("./Mahdi: Aucune réponse, tentative %d sur %d\n", retries, UDP_MAX_RETRIES);
+            printf("Result: Timeout, retry %d/%d\n", retries, UDP_MAX_RETRIES);
             continue;
         }
 
@@ -74,19 +74,19 @@ int send_udp_request(int sockfd, struct sockaddr_in *serv_addr, char *buffer, si
         socklen_t from_len = sizeof(from_addr);
         n = recvfrom(sockfd, packet, MAX_DATAGRAM_SIZE, 0, (struct sockaddr *)&from_addr, &from_len);
         if (n < 0) {
-            fprintf(stderr, "./Mahdi: Problème lors de la réception UDP : %s\n", strerror(errno));
+            fprintf(stderr, "Result: Failed to receive UDP packet: %s\n", strerror(errno));
             return -1;
         }
 
         if (n < sizeof(UdpHeader)) {
-            printf("./Mahdi: Paquet reçu incomplet\n");
+            printf("Result: Received datagram too short\n");
             continue;
         }
 
         UdpHeader recv_header;
         memcpy(&recv_header, packet, sizeof(UdpHeader));
         if (recv_header.seq != header.seq) {
-            printf("./Mahdi: Séquence non correspondante, paquet ignoré\n");
+            printf("Result: Incorrect sequence number, ignoring\n");
             continue;
         }
 
@@ -98,14 +98,14 @@ int send_udp_request(int sockfd, struct sockaddr_in *serv_addr, char *buffer, si
         response[payload_len] = '\0';
 
         if (strncmp(recv_header.type, "WAIT", 4) == 0) {
-            printf("./Mahdi: %s\n", response);
-            continue; // Attendre le prochain paquet
+            printf("Result: %s\n", response);
+            continue; // Wait for next packet
         }
 
         return payload_len;
     }
 
-    printf("./Mahdi: Échec après %d tentatives\n", UDP_MAX_RETRIES);
+    printf("Result: Failed after %d retries\n", UDP_MAX_RETRIES);
     return -1;
 }
 
@@ -117,7 +117,7 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[1], "udp") == 0) {
             proto = PROTO_UDP;
         } else {
-            fprintf(stderr, "./Mahdi: Protocole non reconnu (utilisez 'tcp' ou 'udp')\n");
+            fprintf(stderr, "Result: Invalid protocol (use 'tcp' or 'udp')\n");
             return 1;
         }
     }
@@ -127,35 +127,35 @@ int main(int argc, char *argv[]) {
     char buffer[BUFFER_SIZE];
     char agence[50];
 
-    // Obtenir le nom de l'agence
+    // Get agency name from executable name
     char *exec_name = basename(argv[0]);
     strncpy(agence, exec_name, sizeof(agence) - 1);
     agence[sizeof(agence) - 1] = '\0';
     if (strlen(agence) == 0) {
-        fprintf(stderr, "./Mahdi: Nom d'agence invalide\n");
+        fprintf(stderr, "Result: Agency name cannot be empty\n");
         return 1;
     }
 
-    // Créer le socket
+    // Create socket
     sockfd = create_socket(proto);
     if (sockfd < 0) {
         return 1;
     }
 
-    // Configurer l'adresse du serveur
+    // Configure server address
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(PORT);
-    if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
-        fprintf(stderr, "./Mahdi: Adresse IP non valide : %s\n", strerror(errno));
+    if (inet_pton(AF_INET, "172.0.0.1", &serv_addr.sin_addr) <= 0) {
+        fprintf(stderr, "Result: Invalid server IP address: %s\n", strerror(errno));
         close(sockfd);
         return 1;
     }
 
-    // Connexion pour TCP
+    // Connect for TCP
     if (proto == PROTO_TCP) {
         if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-            fprintf(stderr, "./Mahdi: Impossible de se connecter au serveur : %s\n", strerror(errno));
+            fprintf(stderr, "Result: Failed to connect to server: %s\n", strerror(errno));
             close(sockfd);
             return 1;
         }
@@ -163,22 +163,22 @@ int main(int argc, char *argv[]) {
 
     int choix;
     while (1) {
-        printf("\n./Mahdi: **** Gestion des Vols ****\n");
-        printf("./Mahdi: 1. Afficher les vols disponibles\n");
-        printf("./Mahdi: 2. Effectuer une réservation\n");
-        printf("./Mahdi: 3. Supprimer une réservation\n");
-        printf("./Mahdi: 4. Vérifier la facture\n");
-        printf("./Mahdi: 0. Terminer\n");
-        printf("./Mahdi: Saisissez une option : ");
+        printf("\nResult: ===== Flight Reservation Menu =====\n");
+        printf("Result: 1. List all flights\n");
+        printf("Result: 2. Reserve a flight\n");
+        printf("Result: 3. Cancel a reservation\n");
+        printf("Result: 4. View invoice\n");
+        printf("Result: 0. Exit\n");
+        printf("Result: Enter choice: ");
         if (scanf("%d", &choix) != 1) {
             while (getchar() != '\n');
-            printf("./Mahdi: Option non valide\n");
+            printf("Result: Invalid choice\n");
             continue;
         }
         while (getchar() != '\n');
 
         if (choix == 0) {
-            printf("./Mahdi: Connexion terminée\n");
+            printf("Result: Disconnecting...\n");
             break;
         }
 
@@ -190,64 +190,64 @@ int main(int argc, char *argv[]) {
                 size_t len = strlen(buffer);
                 if (proto == PROTO_TCP) {
                     if (write(sockfd, buffer, len) != len) {
-                        fprintf(stderr, "./Mahdi: Erreur lors de l'envoi de la requête LIST : %s\n", strerror(errno));
+                        fprintf(stderr, "Result: Failed to send LIST command: %s\n", strerror(errno));
                         close(sockfd);
                         return 1;
                     }
-                    printf("./Mahdi: \nListe des vols :\n");
+                    printf("Result: \nAvailable Flights:\n");
                     while (1) {
                         ssize_t n = read(sockfd, buffer, BUFFER_SIZE - 1);
                         if (n < 0) {
-                            fprintf(stderr, "./Mahdi: Problème de lecture de la réponse LIST : %s\n", strerror(errno));
+                            fprintf(stderr, "Result: Error reading LIST response: %s\n", strerror(errno));
                             close(sockfd);
                             return 1;
                         }
                         if (n == 0) {
-                            printf("./Mahdi: Serveur déconnecté\n");
+                            printf("Result: Server closed connection\n");
                             close(sockfd);
                             return 1;
                         }
                         buffer[n] = '\0';
                         if (strncmp(buffer, "WAIT", 4) == 0) {
-                            printf("./Mahdi: %s\n", buffer + 5);
+                            printf("Result: %s\n", buffer + 5);
                             continue;
                         }
-                        printf("./Mahdi: %s", buffer);
+                        printf("Result: %s", buffer);
                         if (strstr(buffer, "END\n") != NULL) {
                             break;
                         }
                     }
                 } else { // UDP
-                    printf("./Mahdi: \nListe des vols :\n");
+                    printf("Result: \nAvailable Flights:\n");
                     ssize_t n = send_udp_request(sockfd, &serv_addr, buffer, len, buffer, BUFFER_SIZE);
                     if (n < 0) {
                         close(sockfd);
                         return 1;
                     }
                     while (strncmp(buffer, "END", 3) != 0) {
-                        printf("./Mahdi: %s", buffer);
+                        printf("Result: %s", buffer);
                         n = send_udp_request(sockfd, &serv_addr, "LIST", 4, buffer, BUFFER_SIZE);
                         if (n < 0) {
                             close(sockfd);
                             return 1;
                         }
                     }
-                    printf("./Mahdi: END\n");
+                    printf("Result: END\n");
                 }
                 break;
             }
 
             case 2: {
                 int ref, nb;
-                printf("./Mahdi: Indiquez le numéro du vol : ");
+                printf("Result: Enter flight reference: ");
                 if (scanf("%d", &ref) != 1 || ref < 0) {
-                    printf("./Mahdi: Numéro de vol incorrect\n");
+                    printf("Result: Invalid flight reference\n");
                     while (getchar() != '\n');
                     continue;
                 }
-                printf("./Mahdi: Nombre de sièges à réserver : ");
+                printf("Result: Enter number of seats: ");
                 if (scanf("%d", &nb) != 1 || nb <= 0) {
-                    printf("./Mahdi: Nombre de sièges non valide\n");
+                    printf("Result: Invalid number of seats\n");
                     while (getchar() != '\n');
                     continue;
                 }
@@ -256,7 +256,7 @@ int main(int argc, char *argv[]) {
                 size_t len = strlen(buffer);
                 if (proto == PROTO_TCP) {
                     if (write(sockfd, buffer, len) != len) {
-                        fprintf(stderr, "./Mahdi: Erreur lors de l'envoi de la réservation : %s\n", strerror(errno));
+                        fprintf(stderr, "Result: Failed to send reservation: %s\n", strerror(errno));
                         close(sockfd);
                         return 1;
                     }
@@ -272,15 +272,15 @@ int main(int argc, char *argv[]) {
 
             case 3: {
                 int ref, nb;
-                printf("./Mahdi: Indiquez le numéro du vol à annuler : ");
+                printf("Result: Enter flight reference to cancel: ");
                 if (scanf("%d", &ref) != 1 || ref < 0) {
-                    printf("./Mahdi: Numéro de vol incorrect\n");
+                    printf("Result: Invalid flight reference\n");
                     while (getchar() != '\n');
                     continue;
                 }
-                printf("./Mahdi: Nombre de sièges à annuler : ");
+                printf("Result: Enter number of seats to cancel: ");
                 if (scanf("%d", &nb) != 1 || nb <= 0) {
-                    printf("./Mahdi: Nombre de sièges non valide\n");
+                    printf("Result: Invalid number of seats\n");
                     while (getchar() != '\n');
                     continue;
                 }
@@ -289,7 +289,7 @@ int main(int argc, char *argv[]) {
                 size_t len = strlen(buffer);
                 if (proto == PROTO_TCP) {
                     if (write(sockfd, buffer, len) != len) {
-                        fprintf(stderr, "./Mahdi: Erreur lors de l'envoi de l'annulation : %s\n", strerror(errno));
+                        fprintf(stderr, "Result: Failed to send cancellation: %s\n", strerror(errno));
                         close(sockfd);
                         return 1;
                     }
@@ -308,7 +308,7 @@ int main(int argc, char *argv[]) {
                 size_t len = strlen(buffer);
                 if (proto == PROTO_TCP) {
                     if (write(sockfd, buffer, len) != len) {
-                        fprintf(stderr, "./Mahdi: Erreur lors de la demande de facture : %s\n", strerror(errno));
+                        fprintf(stderr, "Result: Failed to send invoice request: %s\n", strerror(errno));
                         close(sockfd);
                         return 1;
                     }
@@ -323,7 +323,7 @@ int main(int argc, char *argv[]) {
             }
 
             default:
-                printf("./Mahdi: Option non valide\n");
+                printf("Result: Invalid choice\n");
                 continue;
         }
 
@@ -332,30 +332,30 @@ int main(int argc, char *argv[]) {
                 while (1) {
                     ssize_t n = read(sockfd, buffer, BUFFER_SIZE - 1);
                     if (n < 0) {
-                        fprintf(stderr, "./Mahdi: Problème lors de la lecture de la réponse : %s\n", strerror(errno));
+                        fprintf(stderr, "Result: Error reading response: %s\n", strerror(errno));
                         close(sockfd);
                         return 1;
                     }
                     if (n == 0) {
-                        printf("./Mahdi: Serveur déconnecté\n");
+                        printf("Result: Server closed connection\n");
                         close(sockfd);
                         return 1;
                     }
                     buffer[n] = '\0';
                     if (strncmp(buffer, "WAIT", 4) == 0) {
-                        printf("./Mahdi: %s\n", buffer + 5);
+                        printf("Result: %s\n", buffer + 5);
                         continue;
                     }
-                    printf("./Mahdi: \nRésultat :\n%s\n", buffer);
+                    printf("Result: \nResponse:\n%s\n", buffer);
                     break;
                 }
-            } else { // Réponse UDP déjà gérée dans send_udp_request
-                printf("./Mahdi: \nRésultat :\n%s\n", buffer);
+            } else { // UDP response already handled in send_udp_request
+                printf("Result: \nResponse:\n%s\n", buffer);
             }
         }
     }
 
     close(sockfd);
-    printf("./Mahdi: Connexion terminée\n");
+    printf("Result: Connection closed\n");
     return 0;
 }
