@@ -186,56 +186,94 @@ int main(int argc, char *argv[]) {
 
         switch (choix) {
             case 1: {
-                strncpy(buffer, "LIST", 5);
-                size_t len = strlen(buffer);
-                if (proto == PROTO_TCP) {
-                    if (write(sockfd, buffer, len) != len) {
-                        fprintf(stderr, "Result: Failed to send LIST command: %s\n", strerror(errno));
-                        close(sockfd);
-                        return 1;
-                    }
-                    printf("Result: \nAvailable Flights:\n");
-                    while (1) {
-                        ssize_t n = read(sockfd, buffer, BUFFER_SIZE - 1);
-                        if (n < 0) {
-                            fprintf(stderr, "Result: Error reading LIST response: %s\n", strerror(errno));
-                            close(sockfd);
-                            return 1;
-                        }
-                        if (n == 0) {
-                            printf("Result: Server closed connection\n");
-                            close(sockfd);
-                            return 1;
-                        }
-                        buffer[n] = '\0';
-                        if (strncmp(buffer, "WAIT", 4) == 0) {
-                            printf("Result: %s\n", buffer + 5);
-                            continue;
-                        }
-                        printf("Result: %s", buffer);
-                        if (strstr(buffer, "END\n") != NULL) {
-                            break;
-                        }
-                    }
-                } else { // UDP
-                    printf("Result: \nAvailable Flights:\n");
-                    ssize_t n = send_udp_request(sockfd, &serv_addr, buffer, len, buffer, BUFFER_SIZE);
-                    if (n < 0) {
-                        close(sockfd);
-                        return 1;
-                    }
-                    while (strncmp(buffer, "END", 3) != 0) {
-                        printf("Result: %s", buffer);
-                        n = send_udp_request(sockfd, &serv_addr, "LIST", 4, buffer, BUFFER_SIZE);
-                        if (n < 0) {
-                            close(sockfd);
-                            return 1;
-                        }
-                    }
-                    printf("Result: END\n");
-                }
+    strncpy(buffer, "LIST", 5);
+    size_t len = strlen(buffer);
+    if (proto == PROTO_TCP) {
+        // TCP handling remains unchanged
+        if (write(sockfd, buffer, len) != len) {
+            perror("Failed to send LIST command");
+            close(sockfd);
+            return 1;
+        }
+        printf("\nAvailable Flights:\n");
+        while (1) {
+            ssize_t n = read(sockfd, buffer, BUFFER_SIZE - 1);
+            if (n < 0) {
+                perror("Error reading LIST response");
+                close(sockfd);
+                return 1;
+            }
+            if (n == 0) {
+                printf("Server closed connection\n");
+                close(sockfd);
+                return 1;
+            }
+            buffer[n] = '\0';
+            if (strncmp(buffer, "WAIT", 4) == 0) {
+                printf("%s\n", buffer + 5);
+                continue;
+            }
+            printf("%s", buffer);
+            if (strstr(buffer, "END\n") != NULL) {
                 break;
             }
+        }
+    } else { // UDP
+        printf("\nAvailable Flights:\n");
+        // Send a single LIST request
+        ssize_t n = send_udp_request(sockfd, &serv_addr, buffer, len, buffer, BUFFER_SIZE);
+        if (n < 0) {
+            close(sockfd);
+            return 1;
+        }
+        // Keep receiving responses with the same seq until END
+        while (strncmp(buffer, "END", 3) != 0) {
+            printf("%s", buffer);
+            // Receive next packet without sending a new LIST request
+            struct sockaddr_in from_addr;
+            socklen_t from_len = sizeof(from_addr);
+            struct timeval tv = { UDP_TIMEOUT_SEC, 0 };
+            fd_set readfds;
+            FD_ZERO(&readfds);
+            FD_SET(sockfd, &readfds);
+            int ready = select(sockfd + 1, &readfds, NULL, NULL, &tv);
+            if (ready < 0) {
+                perror("Error in select");
+                close(sockfd);
+                return 1;
+            }
+            if (ready == 0) {
+                printf("Timeout waiting for next LIST response\n");
+                close(sockfd);
+                return 1;
+            }
+            n = recvfrom(sockfd, buffer, MAX_DATAGRAM_SIZE, 0, (struct sockaddr *)&from_addr, &from_len);
+            if (n < 0) {
+                perror("Failed to receive UDP packet");
+                close(sockfd);
+                return 1;
+            }
+            if (n < sizeof(UdpHeader)) {
+                printf("Received datagram too short\n");
+                continue;
+            }
+            UdpHeader recv_header;
+            memcpy(&recv_header, buffer, sizeof(UdpHeader));
+            size_t payload_len = n - sizeof(UdpHeader);
+            if (payload_len > BUFFER_SIZE - 1) {
+                payload_len = BUFFER_SIZE - 1;
+            }
+            memcpy(buffer, buffer + sizeof(UdpHeader), payload_len);
+            buffer[payload_len] = '\0';
+            if (strncmp(recv_header.type, "WAIT", 4) == 0) {
+                printf("%s\n", buffer);
+                continue;
+            }
+        }
+        printf("END\n");
+    }
+    break;
+}
 
             case 2: {
                 int ref, nb;
