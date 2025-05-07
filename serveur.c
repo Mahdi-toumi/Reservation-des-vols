@@ -334,6 +334,7 @@ void annulerVol(int sock, struct sockaddr_in *cli_addr, socklen_t cli_len, int r
     FILE *tmp = fopen("temp.txt", "w");
     char line[BUFFER_SIZE];
     int trouvé = 0;
+    int prix_vol = 0; // Pour stocker le prix du vol annulé
 
     if (!f || !tmp) {
         char err[] = "Error: Unable to access flights file\n";
@@ -358,25 +359,46 @@ void annulerVol(int sock, struct sockaddr_in *cli_addr, socklen_t cli_len, int r
         char dest[50];
         if (sscanf(line, "%d %s %d %d", &r, dest, &places, &prix) == 4) {
             if (r == ref) {
-                trouvé = 1;
-                places += nb_places;
-                fprintf(tmp, "%d %s %d %d\n", r, dest, places, prix);
-                int penalite = (int)(nb_places * prix * 0.1);
-                updateFacture(sock, cli_addr, cli_len, agence, penalite, proto, seq);
-                char msg[BUFFER_SIZE];
-                snprintf(msg, sizeof(msg), "Cancellation confirmed: %d seats on flight %d (penalty %d€)\n", nb_places, ref, penalite);
-                if (proto == PROTO_TCP) {
-                    if (write(sock, msg, strlen(msg)) < 0) {
-                        fprintf(stderr, "Result: Failed to send cancellation confirmation: %s\n", strerror(errno));
+                trouvé = 0;
+                if (places >= 0) { // Vérifie que les places sont valides après annulation
+                    trouvé = 1;
+                    places += nb_places;
+                    prix_vol = prix; // Stocke le prix par siège
+                    fprintf(tmp, "%d %s %d %d\n", r, dest, places, prix);
+                    int montant_reserve = nb_places * prix; // Montant total réservé
+                    int penalite = (int)(montant_reserve * 0.1); // Pénalité de 10%
+                    updateFacture(sock, cli_addr, cli_len, agence, -montant_reserve + penalite, proto, seq); // Soustrait le montant réservé et ajoute la pénalité
+                    char msg[BUFFER_SIZE];
+                    snprintf(msg, sizeof(msg), "Cancellation confirmed: %d seats on flight %d (penalty %d€)\n", nb_places, ref, penalite);
+                    if (proto == PROTO_TCP) {
+                        if (write(sock, msg, strlen(msg)) < 0) {
+                            perror("Failed to send cancellation confirmation");
+                        }
+                    } else {
+                        UdpHeader header = { seq, "ANUL", (uint32_t)strlen(msg) };
+                        char packet[MAX_DATAGRAM_SIZE];
+                        memcpy(packet, &header, sizeof(UdpHeader));
+                        memcpy(packet + sizeof(UdpHeader), msg, strlen(msg));
+                        sendto(sock, packet, sizeof(UdpHeader) + strlen(msg), 0, (struct sockaddr *)cli_addr, cli_len);
                     }
+                    logHisto(sock, cli_addr, cli_len, ref, agence, "CANCELLATION", nb_places, "OK", proto, seq);
                 } else {
-                    UdpHeader header = { seq, "ANUL", (uint32_t)strlen(msg) };
-                    char packet[MAX_DATAGRAM_SIZE];
-                    memcpy(packet, &header, sizeof(UdpHeader));
-                    memcpy(packet + sizeof(UdpHeader), msg, strlen(msg));
-                    sendto(sock, packet, sizeof(UdpHeader) + strlen(msg), 0, (struct sockaddr *)cli_addr, cli_len);
+                    fprintf(tmp, "%s", line);
+                    char msg[BUFFER_SIZE];
+                    snprintf(msg, sizeof(msg), "Error: Invalid number of seats for cancellation\n");
+                    if (proto == PROTO_TCP) {
+                        if (write(sock, msg, strlen(msg)) < 0) {
+                            perror("Failed to send error message");
+                        }
+                    } else {
+                        UdpHeader header = { seq, "ERR", (uint32_t)strlen(msg) };
+                        char packet[MAX_DATAGRAM_SIZE];
+                        memcpy(packet, &header, sizeof(UdpHeader));
+                        memcpy(packet + sizeof(UdpHeader), msg, strlen(msg));
+                        sendto(sock, packet, sizeof(UdpHeader) + strlen(msg), 0, (struct sockaddr *)cli_addr, cli_len);
+                    }
+                    logHisto(sock, cli_addr, cli_len, ref, agence, "CANCELLATION", nb_places, "FAILED", proto, seq);
                 }
-                logHisto(sock, cli_addr, cli_len, ref, agence, "CANCELLATION", nb_places, "OK", proto, seq);
             } else {
                 fprintf(tmp, "%s", line);
             }
@@ -392,7 +414,7 @@ void annulerVol(int sock, struct sockaddr_in *cli_addr, socklen_t cli_len, int r
         debug_print("Flight reference not found", cli_addr, sock);
         if (proto == PROTO_TCP) {
             if (write(sock, msg, strlen(msg)) < 0) {
-                fprintf(stderr, "Result: Failed to send error message: %s\n", strerror(errno));
+                perror("Failed to send error message");
             }
         } else {
             UdpHeader header = { seq, "ERR", (uint32_t)strlen(msg) };
@@ -405,7 +427,7 @@ void annulerVol(int sock, struct sockaddr_in *cli_addr, socklen_t cli_len, int r
         logHisto(sock, cli_addr, cli_len, ref, agence, "CANCELLATION", nb_places, "UNKNOWN", proto, seq);
     } else {
         if (remove(VOL_FILE) != 0 || rename("temp.txt", VOL_FILE) != 0) {
-            fprintf(stderr, "Result: Failed to update flights file: %s\n", strerror(errno));
+            perror("Failed to update flights file");
         }
         debug_print("Flights file updated successfully", cli_addr, sock);
     }
